@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D 서브웨이 런 - 코인 & 사람 캐릭터</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #2c3e50;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            font-family: 'Malgun Gothic', sans-serif;
+            touch-action: none;
+        }
+       
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            background-color: #87CEEB;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        #game-container canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            outline: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            z-index: 10;
+        }
+
+        .hud-container {
+            padding: 15px 25px;
+            display: flex;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.4);
+            margin: 15px;
+            border-radius: 15px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .hud-text {
+            font-size: 22px;
+            font-weight: 900;
+            color: #fff;
+            letter-spacing: 1px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+
+        #coin-counter {
+            color: #f1c40f;
+        }
+
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            pointer-events: auto;
+            z-index: 20;
+        }
+
+        #game-over-screen h1 {
+            font-size: 40px;
+            margin-bottom: 10px;
+            color: #e74c3c;
+            text-shadow: 2px 2px 0px #000;
+        }
+
+        #game-over-screen p {
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 20px;
+            font-weight: bold;
+            color: white;
+            background-color: #3498db;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: transform 0.1s, background-color 0.2s;
+        }
+
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 3px rgba(0,0,0,0.3);
+        }
+       
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: #fff;
+            font-size: 16px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui-layer">
+        <div class="hud-container">
+            <div class="hud-text">거리: <span id="score">0</span>m</div>
+            <div class="hud-text" id="coin-counter">코인: <span id="coins">0</span></div>
+        </div>
+        <div id="instructions">방향키/스와이프로 피하고 코인을 모으세요! 움직이는 기차 주의!</div>
+    </div>
+
+    <div id="game-over-screen">
+        <h1>게임 오버!</h1>
+        <p>달린 거리: <span id="final-score">0</span>m</p>
+        <p>획득 코인: <span id="final-coins">0</span>개</p>
+        <button id="restart-btn">다시 시작</button>
+    </div>
+</div>
+
+<script>
+    const container = document.getElementById('game-container');
+    const scoreElement = document.getElementById('score');
+    const coinElement = document.getElementById('coins');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const finalScoreElement = document.getElementById('final-score');
+    const finalCoinsElement = document.getElementById('final-coins');
+    const restartBtn = document.getElementById('restart-btn');
+
+    let scene, camera, renderer;
+    let playerGroup; // 사람 형태의 그룹
+    let obstacles = [];
+    let coins = [];
+    let roadLines = [];
+    let buildings = []; // 주변 건물(도시 배경)
+    let particles = []; // 코인 획득 파티클 효과
+
+    let isGameOver = false;
+    let distance = 0;
+    let coinCount = 0;
+    let gameSpeed = 0.35;
+    let frames = 0;
+
+    const LANE_WIDTH = 3;
+    let currentLane = 0;
+    let isJumping = false;
+    let jumpCount = 0; // 추가: 2단 점프를 위한 카운트 변수
+    let isFastFalling = false; // 추가: 빠른 착지를 위한 변수
+    let isSliding = false;
+    let yVelocity = 0;
+    const GRAVITY = 0.02;
+    const JUMP_POWER = 0.35;
+    let slideTimer = 0;
+
+    const playerBox = new THREE.Box3();
+    const obstacleBox = new THREE.Box3();
+    const coinBox = new THREE.Box3();
+
+    window.onload = function() {
+        init3D();
+        animate();
+    };
+
+    function init3D() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color('#6ba8d1'); // 더 현실적인 하늘색
+        scene.fog = new THREE.FogExp2('#6ba8d1', 0.015); // 원근감을 위한 지수형 안개
+
+        const aspect = container.clientWidth / container.clientHeight;
+        camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
+        camera.position.set(0, 6, 9);
+        camera.lookAt(0, 1, -10);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // 부드럽고 현실적인 그림자
+        renderer.outputEncoding = THREE.sRGBEncoding; // 정확한 색상 표현
+        renderer.toneMapping = THREE.ACESFilmicToneMapping; // 영화 같은 조명(HDR) 처리
+        renderer.toneMappingExposure = 1.1;
+        container.insertBefore(renderer.domElement, container.firstChild);
+
+        window.addEventListener('resize', () => {
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            renderer.setSize(width, height);
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+        });
+
+        // 조명 퀄리티 대폭 업그레이드
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // 은은한 주변광
+        scene.add(ambientLight);
+       
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5); // 하늘빛과 땅의 반사광
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xfff0dd, 1.5); // 따뜻한 햇빛
+        dirLight.position.set(-15, 30, 15);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048; // 고해상도 그림자
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.left = -25;
+        dirLight.shadow.camera.right = 25;
+        dirLight.shadow.camera.top = 25;
+        dirLight.shadow.camera.bottom = -25;
+        dirLight.shadow.bias = -0.0005; // 그림자 깨짐 방지
+        scene.add(dirLight);
+
+        // 바닥 (자갈/콘크리트 질감)
+        const groundGeo = new THREE.PlaneGeometry(60, 400);
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: '#3a3f44',
+            roughness: 0.9,
+            metalness: 0.1
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        createRoadLines();
+        createEnvironment();
+        createHumanPlayer();
+        setupControls();
+    }
+
+    // 도시 배경(빌딩) 퀄리티 업그레이드
+    function createEnvironment() {
+        const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
+        for(let i = 0; i < 60; i++) {
+            const height = Math.random() * 30 + 10;
+            // 유리 빌딩(메탈릭 높음)과 콘크리트 빌딩 혼합
+            const isGlass = Math.random() > 0.5;
+            const buildingMat = new THREE.MeshStandardMaterial({
+                color: isGlass ? '#1a2b3c' : '#4a5056',
+                roughness: isGlass ? 0.1 : 0.8,
+                metalness: isGlass ? 0.9 : 0.2
+            });
+            const building = new THREE.Mesh(buildingGeo, buildingMat);
+           
+            building.scale.set(5 + Math.random()*3, height, 5 + Math.random()*3);
+           
+            const isLeft = i % 2 === 0;
+            const xPos = isLeft ? -12 - Math.random() * 8 : 12 + Math.random() * 8;
+            const zPos = -i * 6;
+           
+            building.position.set(xPos, height / 2, zPos);
+            building.castShadow = true;
+            building.receiveShadow = true;
+           
+            scene.add(building);
+            buildings.push(building);
+        }
+    }
+
+    // 사람 형태 모델 (물리기반 렌더링 재질 적용 - 둥글게 캡슐형태로 수정)
+    function createHumanPlayer() {
+        playerGroup = new THREE.Group();
+
+        const skinMat = new THREE.MeshStandardMaterial({ color: '#ffdbac', roughness: 0.5 });
+        const shirtMat = new THREE.MeshStandardMaterial({ color: '#2980b9', roughness: 0.7, metalness: 0.1 });
+        const pantsMat = new THREE.MeshStandardMaterial({ color: '#2c3e50', roughness: 0.8 });
+
+        // 1. 머리 (완벽한 구형)
+        const headGeo = new THREE.SphereGeometry(0.35, 32, 32);
+        const head = new THREE.Mesh(headGeo, skinMat);
+        head.position.y = 2.1;
+        head.castShadow = true;
+
+        // 2. 몸통 (원기둥 + 양끝에 구를 달아 둥근 캡슐 형태로)
+        const bodyGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.4, 32);
+        const body = new THREE.Mesh(bodyGeo, shirtMat);
+        body.position.y = 1.3;
+        body.castShadow = true;
+       
+        const bodyCapGeo = new THREE.SphereGeometry(0.32, 32, 32);
+        const bodyTop = new THREE.Mesh(bodyCapGeo, shirtMat);
+        bodyTop.position.y = 0.2;
+        const bodyBottom = new THREE.Mesh(bodyCapGeo, shirtMat);
+        bodyBottom.position.y = -0.2;
+        body.add(bodyTop, bodyBottom);
+
+        // 팔다리 애니메이션 제어를 위한 객체 보관
+        playerGroup.userData.limbs = [];
+
+        // 3. 왼팔 (둥근 캡슐 형태)
+        const armGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.5, 32);
+        const armCapGeo = new THREE.SphereGeometry(0.12, 32, 32);
+       
+        const leftArm = new THREE.Mesh(armGeo, skinMat);
+        leftArm.position.set(-0.55, 1.4, 0);
+        leftArm.castShadow = true;
+       
+        const leftShoulder = new THREE.Mesh(armCapGeo, skinMat);
+        leftShoulder.position.y = 0.25;
+        const leftHand = new THREE.Mesh(armCapGeo, skinMat);
+        leftHand.position.y = -0.25;
+        leftArm.add(leftShoulder, leftHand);
+
+        playerGroup.add(leftArm);
+        playerGroup.userData.leftArm = leftArm;
+
+        // 4. 오른팔
+        const rightArm = new THREE.Mesh(armGeo, skinMat);
+        rightArm.position.set(0.55, 1.4, 0);
+        rightArm.castShadow = true;
+       
+        const rightShoulder = new THREE.Mesh(armCapGeo, skinMat);
+        rightShoulder.position.y = 0.25;
+        const rightHand = new THREE.Mesh(armCapGeo, skinMat);
+        rightHand.position.y = -0.25;
+        rightArm.add(rightShoulder, rightHand);
+
+        playerGroup.add(rightArm);
+        playerGroup.userData.rightArm = rightArm;
+
+        // 5. 왼다리 (둥근 캡슐 형태)
+        const legGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.5, 32);
+        const legCapGeo = new THREE.SphereGeometry(0.16, 32, 32);
+       
+        const leftLeg = new THREE.Mesh(legGeo, pantsMat);
+        leftLeg.position.set(-0.2, 0.45, 0);
+        leftLeg.castShadow = true;
+       
+        const leftKnee = new THREE.Mesh(legCapGeo, pantsMat);
+        leftKnee.position.y = 0.25;
+        const leftFoot = new THREE.Mesh(legCapGeo, pantsMat);
+        leftFoot.position.y = -0.25;
+        leftLeg.add(leftKnee, leftFoot);
+
+        playerGroup.add(leftLeg);
+        playerGroup.userData.leftLeg = leftLeg;
+
+        // 6. 오른다리
+        const rightLeg = new THREE.Mesh(legGeo, pantsMat);
+        rightLeg.position.set(0.2, 0.45, 0);
+        rightLeg.castShadow = true;
+       
+        const rightKnee = new THREE.Mesh(legCapGeo, pantsMat);
+        rightKnee.position.y = 0.25;
+        const rightFoot = new THREE.Mesh(legCapGeo, pantsMat);
+        rightFoot.position.y = -0.25;
+        rightLeg.add(rightKnee, rightFoot);
+
+        playerGroup.add(rightLeg);
+        playerGroup.userData.rightLeg = rightLeg;
+
+        playerGroup.add(head, body);
+        playerGroup.position.set(0, 0, 0); // 바닥 기준
+        scene.add(playerGroup);
+    }
+
+    // 철로 시스템 (나무 침목 + 금속 레일)
+    function createRoadLines() {
+        // 나무 침목
+        const tieGeo = new THREE.BoxGeometry(10, 0.1, 0.5);
+        const tieMat = new THREE.MeshStandardMaterial({ color: '#4a3625', roughness: 1.0 });
+       
+        for (let i = 0; i < 30; i++) {
+            let tie = new THREE.Mesh(tieGeo, tieMat);
+            tie.position.set(0, 0.05, -i * 4);
+            tie.receiveShadow = true;
+            scene.add(tie);
+            roadLines.push(tie);
+        }
+
+        // 고정 금속 레일
+        const railGeo = new THREE.BoxGeometry(0.15, 0.2, 400);
+        const railMat = new THREE.MeshStandardMaterial({ color: '#999999', metalness: 0.9, roughness: 0.3 });
+       
+        const railPositions = [-4.5, -1.5, 1.5, 4.5];
+        railPositions.forEach(x => {
+            let rail = new THREE.Mesh(railGeo, railMat);
+            rail.position.set(x, 0.1, -100);
+            rail.receiveShadow = true;
+            scene.add(rail);
+        });
+    }
+
+    function spawnObstacle() {
+        const lane = Math.floor(Math.random() * 3) - 1;
+        const xPos = lane * LANE_WIDTH;
+        let zPos = -100;
+       
+        let obsMesh;
+        const typeRandom = Math.random();
+        let obsType = '';
+
+        // 기차 등장 확률 50%
+        if (typeRandom < 0.5) {
+            const isTall = Math.random() > 0.5;
+            obsType = isTall ? 'tall_train' : 'train';
+            const trainHeight = isTall ? 5.25 : 3.5;
+            const trainColor = isTall ? '#8e44ad' : '#c0392b';
+           
+            zPos = -150;
+            obsMesh = new THREE.Group();
+           
+            // 기차 몸체 (리얼한 메탈릭 적용)
+            const bodyGeo = new THREE.BoxGeometry(2.6, trainHeight, 24);
+            const bodyMat = new THREE.MeshStandardMaterial({
+                color: trainColor, metalness: 0.5, roughness: 0.4
+            });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = trainHeight / 2;
+            body.castShadow = true;
+            body.receiveShadow = true;
+            obsMesh.add(body);
+
+            // 유리창 (반사 재질)
+            const winGeo = new THREE.BoxGeometry(2.2, 1.2, 0.2);
+            const winMat = new THREE.MeshStandardMaterial({
+                color: '#111111', metalness: 0.9, roughness: 0.1
+            });
+            const win = new THREE.Mesh(winGeo, winMat);
+            win.position.set(0, (trainHeight / 2) + 0.45, 12.0);
+            obsMesh.add(win);
+
+            // 전조등 (헤드라이트 빛 발산)
+            const lightGeo = new THREE.CircleGeometry(0.3, 16);
+            const lightMat = new THREE.MeshStandardMaterial({
+                color: 0xffffff, emissive: 0xffffee, emissiveIntensity: 2
+            });
+            const leftLight = new THREE.Mesh(lightGeo, lightMat);
+            leftLight.position.set(-0.8, (trainHeight / 2) - 0.4, 12.01);
+            const rightLight = new THREE.Mesh(lightGeo, lightMat);
+            rightLight.position.set(0.8, (trainHeight / 2) - 0.4, 12.01);
+            obsMesh.add(leftLight, rightLight);
+           
+            obsMesh.position.set(xPos, 0, zPos);
+            obsMesh.userData = { type: obsType, speed: 0.3, roofHeight: trainHeight };
+            scene.add(obsMesh);
+
+        } else if (typeRandom < 0.65) {
+            obsType = 'wall';
+            const geo = new THREE.BoxGeometry(2, 2.5, 2);
+            const mat = new THREE.MeshStandardMaterial({ color: '#e74c3c', roughness: 0.8, metalness: 0.2 });
+            obsMesh = new THREE.Mesh(geo, mat);
+            obsMesh.position.set(xPos, 1.25, zPos);
+            obsMesh.castShadow = true;
+            obsMesh.receiveShadow = true;
+            obsMesh.userData = { type: obsType };
+            scene.add(obsMesh);
+        } else if (typeRandom < 0.85) {
+            obsType = 'hurdle';
+            const geo = new THREE.BoxGeometry(2.5, 0.8, 1);
+            const mat = new THREE.MeshStandardMaterial({ color: '#e67e22', roughness: 0.8 });
+            obsMesh = new THREE.Mesh(geo, mat);
+            obsMesh.position.set(xPos, 0.4, zPos);
+            obsMesh.castShadow = true;
+            obsMesh.receiveShadow = true;
+            obsMesh.userData = { type: obsType };
+            scene.add(obsMesh);
+        } else {
+            obsType = 'overhead';
+            const geo = new THREE.BoxGeometry(2.5, 1, 1);
+            const mat = new THREE.MeshStandardMaterial({ color: '#2980b9', roughness: 0.5, metalness: 0.5 });
+            obsMesh = new THREE.Mesh(geo, mat);
+            obsMesh.position.set(xPos, 2.5, zPos);
+            obsMesh.castShadow = true;
+            obsMesh.receiveShadow = true;
+            obsMesh.userData = { type: obsType };
+            scene.add(obsMesh);
+        }
+
+        obstacles.push(obsMesh);
+    }
+
+    // 코인 생성 함수
+    function spawnCoin() {
+        const lane = Math.floor(Math.random() * 3) - 1;
+        const xPos = lane * LANE_WIDTH;
+        const zPos = -100;
+
+        const coinGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16);
+        // 메탈 질감 극대화 (진짜 금화처럼)
+        const coinMat = new THREE.MeshStandardMaterial({
+            color: '#ffaa00',
+            emissive: '#332200',
+            metalness: 1.0,
+            roughness: 0.1
+        });
+        const coinMesh = new THREE.Mesh(coinGeo, coinMat);
+       
+        coinMesh.rotation.x = Math.PI / 2;
+        coinMesh.position.set(xPos, 1, zPos);
+        coinMesh.castShadow = true;
+
+        scene.add(coinMesh);
+        coins.push(coinMesh);
+    }
+
+    function updatePlayer() {
+        const targetX = currentLane * LANE_WIDTH;
+        playerGroup.position.x += (targetX - playerGroup.position.x) * 0.15;
+
+        // --- 다이나믹 바닥 높이 계산 (기차 위에 올라타기 지원) ---
+        let groundY = 0;
+        for (let i = 0; i < obstacles.length; i++) {
+            let obs = obstacles[i];
+            if (obs.userData.type === 'train' || obs.userData.type === 'tall_train') {
+                if (Math.abs(playerGroup.position.x - obs.position.x) < 1.0) {
+                    // 플레이어가 기차의 Z축 범위(길이) 안에 있는지 확인 (길이가 24로 2배 늘었으므로 범위도 두 배로)
+                    if (0 > obs.position.z - 12.5 && 0 < obs.position.z + 12.5) {
+                        groundY = obs.userData.roofHeight; // 기차의 실제 높이를 바닥으로 동적 설정!
+                        break;
+                    }
+                }
+            }
+        }
+
+        // --- 점프 및 중력 물리엔진 ---
+        if (isJumping || playerGroup.position.y > groundY) {
+            playerGroup.position.y += yVelocity;
+           
+            // 빠른 착지 시 중력을 3배로 강하게 적용
+            if (isFastFalling) {
+                yVelocity -= GRAVITY * 3;
+            } else {
+                yVelocity -= GRAVITY;
+            }
+
+            // 바닥(일반 바닥 또는 기차 위)에 착지했을 때
+            if (playerGroup.position.y <= groundY && yVelocity <= 0) {
+                // 기차 정면에 부딪힌 것이 아니라, 위에서 안전하게 떨어졌을 때만 착지 판정
+                if (groundY === 0 || playerGroup.position.y >= groundY - 1.2) {
+                    playerGroup.position.y = groundY;
+                    isJumping = false;
+                    jumpCount = 0; // 점프 횟수 초기화
+                    isFastFalling = false; // 빠른 착지 상태 초기화
+                    yVelocity = 0;
+                }
+            }
+        }
+
+        // 기차 위를 달리다가 기차가 지나가서 떨어질 때
+        if (playerGroup.position.y > groundY && !isJumping) {
+            isJumping = true;
+            jumpCount = 1; // 공중에서 떨어지는 중이므로 2단 점프 1회 가능
+            yVelocity = 0;
+        }
+
+        // --- 슬라이딩 ---
+        if (isSliding) {
+            slideTimer--;
+            playerGroup.scale.y = 0.5; // 납작해짐
+            if (slideTimer <= 0) {
+                isSliding = false;
+                playerGroup.scale.y = 1;
+            }
+        } else {
+            playerGroup.scale.y = 1;
+        }
+
+        // --- 팔다리 애니메이션 ---
+        const time = Date.now() * 0.015;
+        if (playerGroup.userData.leftArm) {
+            if (!isJumping && !isSliding) {
+                // 달리기 애니메이션
+                playerGroup.userData.leftArm.rotation.x = Math.sin(time) * 0.5;
+                playerGroup.userData.rightArm.rotation.x = -Math.sin(time) * 0.5;
+                playerGroup.userData.leftLeg.rotation.x = -Math.sin(time) * 0.5;
+                playerGroup.userData.rightLeg.rotation.x = Math.sin(time) * 0.5;
+            } else if (isJumping) {
+                // 점프 포즈 (만세 포즈)
+                playerGroup.userData.leftArm.rotation.x = -Math.PI / 4;
+                playerGroup.userData.rightArm.rotation.x = -Math.PI / 4;
+                playerGroup.userData.leftLeg.rotation.x = -Math.PI / 6;
+                playerGroup.userData.rightLeg.rotation.x = Math.PI / 6;
+            } else if (isSliding) {
+                // 슬라이딩 포즈 (팔다리를 곧게 폄)
+                playerGroup.userData.leftArm.rotation.x = Math.PI / 2;
+                playerGroup.userData.rightArm.rotation.x = Math.PI / 2;
+                playerGroup.userData.leftLeg.rotation.x = 0;
+                playerGroup.userData.rightLeg.rotation.x = 0;
+            }
+        }
+
+        playerBox.setFromObject(playerGroup);
+    }
+
+    function checkCollisions() {
+        // 1. 장애물 충돌 검사
+        for (let i = 0; i < obstacles.length; i++) {
+            const obs = obstacles[i];
+            obstacleBox.setFromObject(obs);
+
+            const center = new THREE.Vector3();
+            obstacleBox.getCenter(center);
+            const size = new THREE.Vector3();
+            obstacleBox.getSize(size);
+           
+            if (obs.userData.type === 'train' || obs.userData.type === 'tall_train') {
+                size.x *= 0.6; // 좌우 판정 완화
+                size.y *= 0.8; // 상하 판정 완화
+                size.z *= 0.9; // 앞뒤 판정 완화
+                obstacleBox.setFromCenterAndSize(center, size);
+
+                if (playerBox.intersectsBox(obstacleBox)) {
+                    // [핵심] 플레이어가 2단 점프를 통해 기차 지붕 위에 안전하게 도달했다면 충돌 무시!
+                    if (playerGroup.position.y >= obs.userData.roofHeight - 0.5) {
+                        continue;
+                    }
+                   
+                    gameOver();
+                    return;
+                }
+            } else {
+                size.multiplyScalar(0.5); // 나머지 장애물은 기존대로 판정 반으로 축소!
+                obstacleBox.setFromCenterAndSize(center, size);
+
+                if (playerBox.intersectsBox(obstacleBox)) {
+                    gameOver();
+                    return;
+                }
+            }
+        }
+
+        // 2. 코인 획득 검사
+        for (let i = coins.length - 1; i >= 0; i--) {
+            const coin = coins[i];
+            coinBox.setFromObject(coin);
+
+            if (playerBox.intersectsBox(coinBox)) {
+                // 코인 획득 처리
+                coinCount += 1;
+                coinElement.innerText = coinCount;
+               
+                // 코인 획득 파티클 이펙트 생성
+                createExplosion(coin.position.x, coin.position.y, coin.position.z, '#f1c40f');
+
+                // 화면에서 코인 제거
+                scene.remove(coin);
+                coins.splice(i, 1);
+            }
+        }
+    }
+
+    // 파티클(폭발) 생성 함수
+    function createExplosion(x, y, z, color) {
+        for(let i = 0; i < 8; i++) {
+            const geom = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const mat = new THREE.MeshBasicMaterial({ color: color });
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.position.set(x, y, z);
+            mesh.userData = {
+                vx: (Math.random() - 0.5) * 0.4,
+                vy: Math.random() * 0.4 + 0.2,
+                vz: (Math.random() - 0.5) * 0.4,
+                life: 1.0 // 파티클 수명
+            };
+            scene.add(mesh);
+            particles.push(mesh);
+        }
+    }
+
+    function animate() {
+        if (isGameOver) return;
+        requestAnimationFrame(animate);
+
+        updatePlayer();
+
+        roadLines.forEach(line => {
+            line.position.z += gameSpeed;
+            if (line.position.z > 5) line.position.z -= 120;
+        });
+
+        // 배경 건물 이동 애니메이션
+        buildings.forEach(building => {
+            building.position.z += gameSpeed;
+            if (building.position.z > 15) {
+                building.position.z -= 315;
+                building.scale.y = Math.random() * 15 + 5;
+                building.position.y = building.scale.y / 2;
+            }
+        });
+
+        // 파티클 업데이트
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.position.x += p.userData.vx;
+            p.position.y += p.userData.vy;
+            p.position.z += p.userData.vz;
+            p.userData.vy -= 0.02; // 중력
+            p.userData.life -= 0.05; // 수명 감소
+           
+            p.scale.setScalar(Math.max(0, p.userData.life)); // 점점 작아짐
+
+            if (p.userData.life <= 0) {
+                scene.remove(p);
+                particles.splice(i, 1);
+            }
+        }
+
+        // 카메라 역동성: 플레이어 위치에 따라 살짝 좌우로 기움
+        camera.position.x += (playerGroup.position.x * 0.3 - camera.position.x) * 0.1;
+        camera.lookAt(playerGroup.position.x * 0.2, 1, -10);
+
+        // 일정 확률로 장애물 또는 코인 생성
+        // 속도가 빨라질수록 장애물도 더 자주 나오도록 난이도 대폭 조정 (최소 간격 15프레임)
+        const spawnRate = Math.max(15, 70 - Math.floor(distance / 50) * 2);
+        if (frames % spawnRate === 0) {
+            if (Math.random() < 0.3) {
+                spawnCoin(); // 30% 확률로 코인 생성
+            } else {
+                spawnObstacle(); // 70% 확률로 장애물 생성
+            }
+        }
+
+        // 장애물 이동
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let obs = obstacles[i];
+           
+            // 기차인 경우 플레이어를 향해 더 빠르게 다가옴
+            if (obs.userData.type === 'train' || obs.userData.type === 'tall_train') {
+                obs.position.z += gameSpeed + obs.userData.speed;
+            } else {
+                obs.position.z += gameSpeed;
+            }
+           
+            // 기차가 2배 길어졌으므로 화면에서 완전히 사라지는 기준점(z)도 15에서 30으로 늘림
+            if (obs.position.z > 30) {
+                scene.remove(obs);
+                obstacles.splice(i, 1);
+            }
+        }
+
+        // 코인 이동 및 회전
+        for (let i = coins.length - 1; i >= 0; i--) {
+            let coin = coins[i];
+            coin.position.z += gameSpeed;
+            coin.rotation.z += 0.05; // 빙글빙글 도는 애니메이션
+           
+            if (coin.position.z > 10) {
+                scene.remove(coin);
+                coins.splice(i, 1);
+            }
+        }
+
+        checkCollisions();
+
+        // 거리 점수 증가
+        if (frames % 10 === 0) {
+            distance += 1;
+            scoreElement.innerText = distance;
+           
+            // 기존 100m마다 0.02 증가에서 -> 50m마다 0.03 증가로 템포 대폭 상향 (최대 속도 한계도 1.5로 해제)
+            if (distance % 50 === 0 && gameSpeed < 1.5) {
+                gameSpeed += 0.03; // 속도 증가
+            }
+        }
+
+        renderer.render(scene, camera);
+        frames++;
+    }
+
+    function moveLeft() {
+        if (currentLane > -1) {
+            currentLane--;
+        }
+    }
+   
+    function moveRight() {
+        if (currentLane < 1) {
+            currentLane++;
+        }
+    }
+
+    function jump() {
+        if (!isSliding) {
+            if (jumpCount === 0) {
+                // 첫 번째 점프
+                isJumping = true;
+                jumpCount = 1;
+                yVelocity = JUMP_POWER;
+            } else if (jumpCount === 1) {
+                // 두 번째 점프 (더 높게!)
+                jumpCount = 2;
+                yVelocity = JUMP_POWER * 1.15; // 1.5배 높은 기차를 무난히 오르도록 2단 점프력 상향
+                isFastFalling = false; // 2단 점프 시 빠른 착지 취소
+            }
+        }
+    }
+    function slide() {
+        if (isJumping) {
+            // 공중에 있을 때 아래를 누르면 빠른 착지 (급강하)
+            isFastFalling = true;
+            if (yVelocity > 0) yVelocity = 0; // 상승 중이었다면 즉시 하강 시작
+        } else if (!isSliding) {
+            // 바닥에 있을 때는 일반 슬라이딩
+            isSliding = true;
+            slideTimer = 40;
+        }
+    }
+
+    function setupControls() {
+        window.addEventListener('keydown', (e) => {
+            if (isGameOver) return;
+            switch(e.key) {
+                case 'ArrowLeft': case 'a': case 'A': moveLeft(); break;
+                case 'ArrowRight': case 'd': case 'D': moveRight(); break;
+                case 'ArrowUp': case 'w': case 'W': jump(); break;
+                case 'ArrowDown': case 's': case 'S': slide(); break;
+            }
+        });
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        container.addEventListener('touchstart', (e) => {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        }, {passive: false});
+
+        container.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+        }, {passive: false});
+
+        container.addEventListener('touchend', (e) => {
+            if (isGameOver) return;
+            let touchEndX = e.changedTouches[0].screenX;
+            let touchEndY = e.changedTouches[0].screenY;
+           
+            const diffX = touchEndX - touchStartX;
+            const diffY = touchEndY - touchStartY;
+            const threshold = 30;
+
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                if (Math.abs(diffX) > threshold) {
+                    if (diffX > 0) moveRight();
+                    else moveLeft();
+                }
+            } else {
+                if (Math.abs(diffY) > threshold) {
+                    if (diffY < 0) jump();
+                    else slide();
+                }
+            }
+        });
+    }
+
+    function gameOver() {
+        isGameOver = true;
+        finalScoreElement.innerText = distance;
+        finalCoinsElement.innerText = coinCount;
+        gameOverScreen.style.display = 'flex';
+    }
+
+    restartBtn.addEventListener('click', () => {
+        isGameOver = false;
+        distance = 0;
+        coinCount = 0;
+        gameSpeed = 0.35;
+        frames = 0;
+       
+        currentLane = 0;
+        isJumping = false;
+        jumpCount = 0; // 점프 횟수 초기화
+        isFastFalling = false;
+        isSliding = false;
+       
+        scoreElement.innerText = distance;
+        coinElement.innerText = coinCount;
+        gameOverScreen.style.display = 'none';
+       
+        obstacles.forEach(obs => scene.remove(obs));
+        obstacles = [];
+        coins.forEach(coin => scene.remove(coin));
+        coins = [];
+       
+        playerGroup.position.set(0, 0, 0);
+        playerGroup.scale.y = 1;
+
+        animate();
+    });
+
+</script>
+
+</body>
+</html>
